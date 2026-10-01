@@ -30,4 +30,10 @@ jobs:
       - name: Build
         run: cmake --build build-test --config Release --target ScrambleTest --parallel
       - name: Robust
-        run: ./build-test/ScrambleTest_artefacts/Release/ScrambleTest.exe robust
+        shell: cmd
+        run: |
+          build-test\ScrambleTest_artefacts\Release\ScrambleTest.exe robust > robust.txt 2>&1
+          set rc=%ERRORLEVEL%
+          type robust.txt
+          echo exit code %rc%
+          exit /b %rc%

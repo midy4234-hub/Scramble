@@ -227,7 +227,7 @@ void ScrambleAudioProcessor::setStateInformation (const void* data, int sizeInBy
             {
                 const auto steps = p.getProperty ("steps").toString();
                 for (int s = 0; s < scr::numSteps && s < steps.length(); ++s)
-                    pattern.steps[(size_t) s].store (juce::jlimit (0, 2, steps[s] - '0'));
+                    pattern.steps[(size_t) s].store (juce::jlimit (0, 2, (int) steps[s] - (int) '0'));   // juce_wchar は Windows では符号なし
                 setScramble ((bool) p.getProperty ("shuffled", false), (uint32_t) (juce::int64) p.getProperty ("seed", 1));
             }
         }
