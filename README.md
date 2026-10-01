@@ -1,5 +1,14 @@
 # Scramble — スペクトルを帯域の塊ごとに並べ替えるグリッチ・エフェクト (VST3)
 
+デモ
+
+https://github.com/user-attachments/assets/a6b92257-0d08-478e-8651-3010080000e8
+
+
+ChordRes と組み合わせたデモ
+
+https://github.com/user-attachments/assets/38bca587-f39a-4684-97b2-493c34ba0431
+
 コードは Claude Code (Anthropic の AI) が書き、MIDy が仕様を決めて Ableton Live で確認しました。
 無保証です。サポート・不具合対応・要望への対応はしません (Issue / Pull Request も受け付けません)。
 ライセンスは AGPLv3 (LICENSE)。JUCE (AGPLv3) と VST3 SDK (MIT) を使っています。Copyright (C) 2026 MIDy
