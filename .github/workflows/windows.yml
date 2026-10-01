@@ -1,0 +1,33 @@
+# Windows (x64) 用 VST3 のビルド。Actions の実行結果ページの Artifacts から Scramble-windows-x64 をダウンロードできる
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  plugin:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release --target Scramble_VST3 --parallel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Scramble-windows-x64
+          path: build/Scramble_artefacts/Release/VST3/
+
+  # DAW 無しの検証 (lab/LabRobust.h の耐久テスト)。MSVC でも DSP が壊れていないかを見る
+  robust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build-test -A x64 -DLAB_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build-test --config Release --target ScrambleTest --parallel
+      - name: Robust
+        run: ./build-test/ScrambleTest_artefacts/Release/ScrambleTest.exe robust

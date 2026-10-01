@@ -1,0 +1,8 @@
+build/
+build-*/
+*.log
+renders/
+old/
+*.wav
+*.m4a
+.DS_Store
