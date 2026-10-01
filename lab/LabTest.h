@@ -32,7 +32,13 @@
 
 namespace lab
 {
+    // 出力を行ごとに流す (パイプ越しでも途中経過が見える)。MSVC の CRT は _IOLBF を _IOFBF 扱いにし、
+    // サイズ 0 を不正な引数としてプロセスを落とす (0xC0000409、main より前) ので、Windows ではバッファ無しにする
+   #if defined (_MSC_VER)
+    struct FlushStdout { FlushStdout() { std::setvbuf (stdout, nullptr, _IONBF, 0); } };
+   #else
     struct FlushStdout { FlushStdout() { std::setvbuf (stdout, nullptr, _IOLBF, 0); } };
+   #endif
     inline FlushStdout flushStdoutOnce;
 
     inline double db (double v) { return 20.0 * std::log10 (std::max (v, 1.0e-12)); }
