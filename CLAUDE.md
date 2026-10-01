@@ -67,6 +67,7 @@ SpecGlitch (別プラグイン、中止済み) の scramble 機能を単体に�
 ## 状態と経緯
 
 - 耐久テスト (robust) FAIL 0 (既定と Octave の両方)
+- Windows (GitHub Actions、MSVC) でも robust は 0 FAIL / 0 WARN (2026-10-01)
 - Reach は当初「20 Hz 起点の区画」方式で、Reach を上げると低域の飛ぶ範囲が逆に狭まる所があった → ユーザー指摘で「最大でどこまで飛ぶか」(単調) に作り直し、塊の幅は Size で別に指定
 - SpecGlitch は中止・削除済み。同種の可視化ツールや SpecGlitch の再提案はしない
 
