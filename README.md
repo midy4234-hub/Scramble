@@ -10,10 +10,10 @@ ChordRes と組み合わせたデモ
 https://github.com/user-attachments/assets/38bca587-f39a-4684-97b2-493c34ba0431
 
 コードは Claude Code (Anthropic の AI) が書き、MIDy が仕様を決めて Ableton Live で確認しました。
-無保証です。サポート・不具合対応・要望への対応はしません (Issue / Pull Request も受け付けません)。
+無保証です。不具合の報告は Issue で受け付けますが、返事や修正は約束しません。Pull Request は受け付けません。
 ライセンスは AGPLv3 (LICENSE)。JUCE (AGPLv3) と VST3 SDK (MIT) を使っています。Copyright (C) 2026 MIDy
 
-Made with Claude Code. Provided as-is, without support. Issues and pull requests are not accepted. Licensed under AGPLv3.
+Made with Claude Code. Provided as-is. Bug reports via Issues are welcome, but replies and fixes are not promised. Pull requests are not accepted. Licensed under AGPLv3.
 
 **ダウンロード**: Releases に Mac 版 (Intel / Apple Silicon 両対応) と Windows 版 (x64) の zip があります。
 
