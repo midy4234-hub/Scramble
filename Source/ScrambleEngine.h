@@ -214,9 +214,14 @@ namespace scr
                         if (held.size() < held.capacity()) held.push_back (m.getNoteNumber());
                         addEvent (t, srcMidi, true, noteSeed (m.getNoteNumber()), false);
                     }
+                    // 離して戻すのは、押さえていたノートを離したときだけ。押していないノートのノートオフや全ノートオフ
+                    // (Live は再生開始や書き出しのときに送ってくる) で、ボタンやトランジェントの並べ替えを解除しない
                     else if (m.isNoteOff())
                     {
-                        held.erase (std::remove (held.begin(), held.end(), m.getNoteNumber()), held.end());
+                        const auto it = std::find (held.begin(), held.end(), m.getNoteNumber());
+                        if (it == held.end())
+                            continue;
+                        held.erase (it);
                         if (! st.midiLatch)
                         {
                             if (held.empty()) addEvent (t, srcMidi, false, 0, false);
@@ -225,8 +230,9 @@ namespace scr
                     }
                     else if (m.isAllNotesOff() || m.isAllSoundOff())
                     {
+                        const bool wasHeld = ! held.empty();
                         held.clear();
-                        if (! st.midiLatch) addEvent (t, srcMidi, false, 0, false);
+                        if (wasHeld && ! st.midiLatch) addEvent (t, srcMidi, false, 0, false);
                     }
                 }
             else

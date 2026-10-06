@@ -173,6 +173,26 @@ namespace
         }
     }
 
+    // 5b. ボタンで並べ替えた状態は、ホストが送ってくる全ノートオフや押していないノートのノートオフで戻らない
+    //     (Live は再生開始・書き出しのときに送ってくる。Hold モードの「離したら戻る」は MIDI で並べ替えたときだけ)
+    void testStrayNoteOff()
+    {
+        Proc p;
+        triggersOff (p);
+        lab::setParam (p, "midion", 1.0f);
+        lab::setParam (p, "midimode", 0.0f);
+        p.setScramble (true, 777u);
+        lab::prepare (p, sr);
+        auto in = lab::noise ((int) (1.0 * sr), 0.25f, 4);
+        lab::RunOptions o;
+        o.midi = { { 0, juce::MidiMessage::allNotesOff (1) }, { 100, juce::MidiMessage::allSoundOff (1) },
+                   { 4800, juce::MidiMessage::noteOff (1, 64) } };
+        auto out = lab::runWith (p, in, o);
+        auto B = runFixed (in, true, 777u);
+        std::printf ("[5b] Hold, shuffled by button, then all-notes-off / stray note-off: shuffled=%d, %.1f dB vs button shuffle (want shuffled=1, very low)\n",
+                     (int) p.savedShuffled.load(), lab::residualDb (out, B, (int) (0.3 * sr), (int) (0.6 * sr)));
+    }
+
     // 6. 詰まった指示: 10 ms 違いの 2 ノート → 2 つ目は minGap まで遅れて、最後は 2 つ目の並べ替え
     void testMinGap()
     {
@@ -583,6 +603,7 @@ int main (int argc, char* argv[])
     testTransient();
     testSeq();
     testMidi();
+    testStrayNoteOff();
     testMinGap();
     testState();
     testHostNotify();
