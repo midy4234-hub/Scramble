@@ -4,11 +4,12 @@
 #include <atomic>
 #include "ScrambleEngine.h"
 
-class ScrambleAudioProcessor  : public juce::AudioProcessor
+class ScrambleAudioProcessor  : public juce::AudioProcessor,
+                                private juce::Timer
 {
 public:
     ScrambleAudioProcessor();
-    ~ScrambleAudioProcessor() override = default;
+    ~ScrambleAudioProcessor() override { stopTimer(); }
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -48,8 +49,17 @@ public:
     std::atomic<bool> savedShuffled { false }, restorePending { false };
     std::atomic<uint32_t> savedSeed { 1 };
     void setScramble (bool shuffled, uint32_t seed) { savedShuffled = shuffled; savedSeed = seed; restorePending = true; }
+    // ボタン操作とステップの編集を、パラメータ以外の状態の変化としてホストに知らせる。
+    // 知らせないと Live は古い状態を持ったままで、フリーズやバウンスの別インスタンスが並べ替え前の状態で鳴る
+    std::atomic<int> hostNotifications { 0 };   // 知らせた回数 (検証用)
 
 private:
+    void timerCallback() override;
+    juce::String stepsString() const;
+    std::atomic<bool> buttonPressed { false };
+    int notifyIn = 0;          // ボタンを押してから知らせるまでのタイマーの回数 (切り替えが詰まって遅れる分を待つ)
+    juce::String lastSteps;    // 最後に知らせた (または読み込んだ) ステップ列
+
     scr::Engine engine;
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> dryDelay { 1 << 16 };
     juce::AudioBuffer<float> dry;

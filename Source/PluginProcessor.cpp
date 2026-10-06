@@ -37,6 +37,31 @@ ScrambleAudioProcessor::ScrambleAudioProcessor()
     pMidiMode = apvts.getRawParameterValue ("midimode");
     pOut      = apvts.getRawParameterValue ("out");
     pBypass   = apvts.getRawParameterValue ("bypass");
+    lastSteps = stepsString();
+    startTimer (100);
+}
+
+juce::String ScrambleAudioProcessor::stepsString() const
+{
+    juce::String steps;
+    for (auto& s : pattern.steps) steps << s.load();
+    return steps;
+}
+
+void ScrambleAudioProcessor::timerCallback()
+{
+    bool changed = false;
+    if (buttonPressed.exchange (false))
+        notifyIn = 2;   // 100〜200 ms 後 (切り替えは最大でフレーム 1 つ分ほど遅れることがある)
+    else if (notifyIn > 0 && --notifyIn == 0)
+        changed = true;
+    const auto steps = stepsString();
+    if (steps != lastSteps) { lastSteps = steps; changed = true; }
+    if (changed)
+    {
+        ++hostNotifications;
+        updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
+    }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout ScrambleAudioProcessor::createLayout()
@@ -142,6 +167,8 @@ void ScrambleAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     st.resetPressed = rs && ! lastReset;
     lastShuffle = sh;
     lastReset = rs;
+    if (st.shufflePressed || st.resetPressed)
+        buttonPressed = true;
 
     scr::Transport tp;
     if (auto* ph = getPlayHead())
@@ -205,10 +232,8 @@ juce::AudioProcessorEditor* ScrambleAudioProcessor::createEditor()
 void ScrambleAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
-    juce::String steps;
-    for (auto& s : pattern.steps) steps << s.load();
     auto p = state.getOrCreateChildWithName ("pattern", nullptr);
-    p.setProperty ("steps", steps, nullptr);
+    p.setProperty ("steps", stepsString(), nullptr);
     p.setProperty ("shuffled", savedShuffled.load(), nullptr);
     p.setProperty ("seed", (juce::int64) savedSeed.load(), nullptr);
     if (auto xml = state.createXml())
@@ -228,6 +253,8 @@ void ScrambleAudioProcessor::setStateInformation (const void* data, int sizeInBy
                 const auto steps = p.getProperty ("steps").toString();
                 for (int s = 0; s < scr::numSteps && s < steps.length(); ++s)
                     pattern.steps[(size_t) s].store (juce::jlimit (0, 2, (int) steps[s] - (int) '0'));   // juce_wchar は Windows では符号なし
+                if (juce::MessageManager::getInstanceWithoutCreating() != nullptr && juce::MessageManager::getInstance()->isThisTheMessageThread())
+                    lastSteps = stepsString();   // 読み込んだだけでは「変更あり」にしない
                 setScramble ((bool) p.getProperty ("shuffled", false), (uint32_t) (juce::int64) p.getProperty ("seed", 1));
             }
         }

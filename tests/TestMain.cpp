@@ -225,6 +225,56 @@ namespace
         }
     }
 
+    // 7b. ボタンで並べ替えたらホストに知らせる (知らせないと Live のフリーズ・バウンスが並べ替え前の状態で鳴る)。
+    //     読み込んだだけでは知らせない。ステップを編集したら知らせる
+    void testHostNotify()
+    {
+        struct Listener : juce::AudioProcessorListener
+        {
+            int dirty = 0;
+            void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
+            void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& d) override { dirty += d.nonParameterStateChanged; }
+        } li;
+        auto pump = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil (400); };
+        auto in = lab::noise ((int) (0.5 * sr), 0.25f, 7);
+
+        Proc a;
+        a.addListener (&li);
+        triggersOff (a);
+        lab::prepare (a, sr);
+        lab::run (a, in);
+        pump();
+        const int idle = li.dirty;
+        lab::setParam (a, "shuffle", 1.0f);
+        lab::run (a, in);
+        lab::setParam (a, "shuffle", 0.0f);
+        lab::run (a, in);
+        pump();
+        const int afterPress = li.dirty;
+
+        // ホストが知らせを受けて取り直した状態で、別インスタンス (フリーズ・バウンス) を作る
+        juce::MemoryBlock mb;
+        a.getStateInformation (mb);
+        Proc b;
+        Listener lb;
+        b.addListener (&lb);
+        b.setStateInformation (mb.getData(), (int) mb.getSize());
+        lab::prepare (b, sr);
+        pump();
+        auto ob = lab::run (b, in);
+        auto orig = runFixed (in, false, 1), ref = runFixed (in, true, a.savedSeed.load());
+        std::printf ("[7b] host told: idle %d, after Shuffle %d, after load %d (want 0/1/0); shuffled a=%d b=%d; "
+                     "copy vs original %.1f dB, copy vs same seed %.1f dB\n",
+                     idle, afterPress, lb.dirty, (int) a.savedShuffled.load(), (int) b.savedShuffled.load(),
+                     lab::residualDb (ob, orig, 0, in.getNumSamples()), lab::residualDb (ob, ref, 0, in.getNumSamples()));
+
+        setSteps (b, "S...............");
+        pump();
+        std::printf ("[7b] host told after a step edit: %d (want 1)\n", lb.dirty);
+        a.removeListener (&li);
+        b.removeListener (&lb);
+    }
+
     void testCpu()
     {
         Proc p;
@@ -535,6 +585,7 @@ int main (int argc, char* argv[])
     testMidi();
     testMinGap();
     testState();
+    testHostNotify();
     testCpu();
     testReach();
     testShiftPurity();

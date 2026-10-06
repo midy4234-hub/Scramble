@@ -34,6 +34,10 @@ SpecGlitch (別プラグイン、中止済み) の scramble 機能を単体に�
 | bypass | Bypass | on/off | off | |
 
 - Shuffle / Reset はパラメータなので MIDI マップや Push に割り当てられる
+- Shuffle / Reset ボタンで並べ替えが変わったとき (100〜200 ms 後) と、ステップを編集したときに、
+  `updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true))` でホストに知らせる。
+  知らせないと Live は古い state を持ったままで、フリーズ・バウンスが並べ替え前の音になった (2026-10-06 ユーザー報告)。
+  トランジェント・シーケンサー・MIDI による切り替えでは知らせない (再生中ずっと「変更あり」になるため)
 - シーケンサーの 16 ステップ (空 / S = Shuffle / R = Reset) と、現在の並べ替え (shuffled・seed) はパラメータではなく state の "pattern" 子要素に保存する
 
 ## DSP (Source/ScrambleEngine.h、STFT は lab/LabStft.h)
