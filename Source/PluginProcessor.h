@@ -63,7 +63,7 @@ private:
     scr::Engine engine;
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> dryDelay { 1 << 16 };
     juce::AudioBuffer<float> dry;
-    juce::SmoothedValue<float> bypassMix;
+    juce::SmoothedValue<float> bypassMix, wetMix;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> outGain;
     bool lastShuffle = false, lastReset = false;
 
@@ -71,6 +71,7 @@ private:
     std::atomic<float>* pSize = nullptr;
     std::atomic<float>* pMode = nullptr;
     std::atomic<float>* pKeepLow = nullptr;
+    std::atomic<float>* pSpray = nullptr;
     std::atomic<float>* pShuffle = nullptr;
     std::atomic<float>* pReset = nullptr;
     std::atomic<float>* pTrans = nullptr;
@@ -79,6 +80,7 @@ private:
     std::atomic<float>* pSeqOn = nullptr;
     std::atomic<float>* pMidiOn = nullptr;
     std::atomic<float>* pMidiMode = nullptr;
+    std::atomic<float>* pMix = nullptr;
     std::atomic<float>* pOut = nullptr;
     std::atomic<float>* pBypass = nullptr;
 

@@ -304,10 +304,11 @@ namespace
     }
 
     // 並べ替えを固定したインスタンスを少し回して、いま鳴っているスロットの対応表 (出力のビン → 入力のビン) を取る
-    std::vector<int> mapping (float reach, float size, uint32_t seed, int& k0, int& kTop)
+    std::vector<int> mapping (float reach, float size, uint32_t seed, int& k0, int& kTop, int mode = 0)
     {
         Proc p;
         triggersOff (p);
+        lab::setParam (p, "mode", (float) mode);
         lab::setParam (p, "reach", reach);
         lab::setParam (p, "size", size);
         p.setScramble (true, seed);
@@ -425,6 +426,112 @@ namespace
         std::sort (res.begin(), res.end());
         std::printf ("[12] octave mode, 1 kHz sine over 10 seeds: %d moved by octaves; residual after fitting one sine at 1k x 2^k: median %.1f dB, worst %.1f dB\n",
                      moved, res[res.size() / 2], res.back());
+    }
+
+    // 17. 規則のモード (Mirror / Rotate / Swap): 種によらず同じ並び、Reach と動く距離、1 kHz のサイン波の行き先
+    void testRuleModes()
+    {
+        const char* names[] = { "", "", "mirror", "rotate", "swap" };
+        for (int mode = scr::modeMirror; mode <= scr::modeSwap; ++mode)
+        {
+            std::printf ("[17] %s: reach -> mean / max displacement (oct), seeds differ:", names[mode]);
+            for (float reach : { 0.0f, 0.25f, 1.0f, 3.0f, 6.0f })
+            {
+                int k0, kTop, same = 1;
+                const auto m = mapping (reach, 0.25f, 1u, k0, kTop, mode);
+                const auto m2 = mapping (reach, 0.25f, 987654u, k0, kTop, mode);
+                same = m == m2;
+                double sum = 0.0, wsum = 0.0, mx = 0.0;
+                std::vector<int> seen ((size_t) kTop + 2, 0);
+                bool perm = true;
+                for (int k = k0; k <= kTop; ++k)
+                {
+                    const int src = m[(size_t) k];
+                    if (src < k0 || src > kTop + 1 || seen[(size_t) src]++) perm = false;
+                    const double dsp = std::abs (std::log2 ((double) src / k)), w = 1.0 / k;
+                    sum += dsp * w; wsum += w; mx = std::max (mx, dsp);
+                }
+                std::printf ("  %.2f: %.2f / %.2f%s%s", reach, sum / wsum, mx, same ? "" : " (SEED DEPENDS!)", perm ? "" : " (NOT A PERMUTATION!)");
+            }
+            // 1 kHz のサイン波がどこへ行くか (Size 1/4、Reach 1)。同じ設定を 2 回、違う種で回して波形が一致するか
+            auto in = lab::sine (sr, 1000.0, 2.0, 0.3f);
+            Proc a, b;
+            for (auto* q : { &a, &b }) { triggersOff (*q); lab::setParam (*q, "mode", (float) mode); lab::setParam (*q, "reach", 1.0f); }
+            a.setScramble (true, 1u); b.setScramble (true, 55555u);
+            lab::prepare (a, sr); lab::prepare (b, sr);
+            const auto oa = lab::run (a, in), ob = lab::run (b, in);
+            const int st = (int) (0.6 * sr), len = (int) sr;
+            double best = 0.0, bestF = 0.0;
+            for (double f = 100.0; f < 20000.0; f += 2.0)
+            {
+                const double w = 2.0 * juce::MathConstants<double>::pi * f / sr;
+                double cs = 0.0, sn = 0.0;
+                for (int i = st; i < st + len; i += 2) { cs += oa.getSample (0, i) * std::cos (w * i); sn += oa.getSample (0, i) * std::sin (w * i); }
+                if (cs * cs + sn * sn > best) { best = cs * cs + sn * sn; bestF = f; }
+            }
+            std::printf ("\n     1 kHz sine (reach 1) -> %.0f Hz; two seeds differ by %.1f dB\n", bestF, lab::residualDb (ob, oa, st, len));
+        }
+    }
+
+    // 19. Dry/Wet: 0 % は原音 (レイテンシぶん遅れるだけ)、50 % は原音と処理後の平均、100 % は今までどおり
+    void testMix()
+    {
+        auto in = lab::noise ((int) sr * 2, 0.2f, 3);
+        auto wet = runFixed (in, true, 4242u);
+        for (float mx : { 0.0f, 50.0f, 100.0f })
+        {
+            Proc p;
+            triggersOff (p);
+            lab::setParam (p, "mix", mx);
+            p.setScramble (true, 4242u);
+            lab::prepare (p, sr);
+            const int L = p.getLatencySamples();
+            auto out = lab::run (p, in);
+            juce::AudioBuffer<float> ref (2, out.getNumSamples());
+            ref.clear();
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                ref.addFrom (ch, L, in, ch, 0, out.getNumSamples() - L, 1.0f - mx * 0.01f);
+                ref.addFrom (ch, 0, wet, ch, 0, out.getNumSamples(), mx * 0.01f);
+            }
+            std::printf ("[19] dry/wet %3.0f %%: vs (1-m)*delayed input + m*wet %.1f dB\n", mx, lab::residualDb (out, ref, L + 4800, 48000));
+        }
+    }
+
+    // 18. Spray: 中央の音 (左右同じノイズ) を左右に振る。足すと元どおり (モノラル互換)、左右の相関が下がる、0 % なら今までどおり
+    void testSpray()
+    {
+        auto in = lab::noise ((int) sr * 2, 0.2f, 7);
+        in.copyFrom (1, 0, in, 0, 0, in.getNumSamples());   // 左右同じ
+        for (int mode : { -1, 0, 1, 2 })   // -1 = 並べ替えなし
+            for (float spray : { 0.0f, 50.0f, 100.0f })
+            {
+                Proc p;
+                triggersOff (p);
+                lab::setParam (p, "spray", spray);
+                if (mode >= 0) { lab::setParam (p, "mode", (float) mode); p.setScramble (true, 777u); }
+                lab::prepare (p, sr);
+                const int L = p.getLatencySamples();
+                auto out = lab::run (p, in);
+                auto ref = runFixed (in, mode >= 0, 777u, std::max (0, mode));   // Spray 0 の同じ並べ替え
+                juce::AudioBuffer<float> sum (2, out.getNumSamples()), rsum (2, out.getNumSamples());
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    sum.copyFrom (ch, 0, out, 0, 0, out.getNumSamples()); sum.addFrom (ch, 0, out, 1, 0, out.getNumSamples());
+                    rsum.copyFrom (ch, 0, ref, 0, 0, ref.getNumSamples()); rsum.addFrom (ch, 0, ref, 1, 0, ref.getNumSamples());
+                }
+                const int a = L + (int) (0.3 * sr), len = (int) sr;
+                double lr = 0.0, ll = 0.0, rr = 0.0;
+                for (int i = a; i < a + len; ++i)
+                {
+                    const double l = out.getSample (0, i), r = out.getSample (1, i);
+                    lr += l * r; ll += l * l; rr += r * r;
+                }
+                std::printf ("[18] spray %3.0f %%, %s: L+R vs no-spray L+R %.1f dB, L/R correlation %.2f, L %+.2f dB / R %+.2f dB vs no-spray\n",
+                             spray, mode < 0 ? "original" : mode == 0 ? "random  " : mode == 1 ? "octave  " : "mirror  ",
+                             lab::residualDb (sum, rsum, a, len), lr / std::sqrt (ll * rr),
+                             lab::db (std::sqrt (ll / len) / lab::rms (ref, a, len)), lab::db (std::sqrt (rr / len) / lab::rms (ref, a, len)));
+            }
     }
 
     // 13. Octave: 倍音のある音 (A3 = 220 Hz、倍音 1..12) の出力のピークが、元の倍音の音名から何セントずれているか
@@ -587,10 +694,13 @@ int main (int argc, char* argv[])
         lab::RobustConfig cfg;
         cfg.skipAutomation = { "shuffle", "reset" };   // ボタン (押した瞬間に切り替わるのが仕様)
         cfg.stateSurvivesPrepare = true;                // 並べ替えの状態はホストの prepare で解除しない
-        if (std::getenv ("SCR_ROBUST_OCTAVE"))          // Octave モードで並べ替えた状態から (トランジェントでも入れ替わる)
-            cfg.setup = [] (juce::AudioProcessor& q)
+        // SCR_ROBUST_OCTAVE=1 は Octave、SCR_ROBUST_MODE=2〜4 は Mirror / Rotate / Swap で並べ替えた状態から (トランジェントでも入れ替わる)
+        const char* env = std::getenv ("SCR_ROBUST_MODE");
+        const float robustMode = env ? (float) std::atoi (env) : std::getenv ("SCR_ROBUST_OCTAVE") ? 1.0f : 0.0f;
+        if (robustMode > 0.0f)
+            cfg.setup = [robustMode] (juce::AudioProcessor& q)
             {
-                lab::setParam (q, "mode", 1.0f);
+                lab::setParam (q, "mode", robustMode);
                 if (auto* p = dynamic_cast<Proc*> (&q)) p->setScramble (true, 4321u);
             };
         return cfg;
@@ -614,6 +724,9 @@ int main (int argc, char* argv[])
     testOctavePitchClasses();
     testModeSwitch();
     testOctaveCpu();
+    testRuleModes();
+    testSpray();
+    testMix();
 
     Proc p;
     setSteps (p, "S...R...S.S.R...");

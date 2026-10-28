@@ -202,15 +202,17 @@ ScrambleAudioProcessorEditor::ScrambleAudioProcessorEditor (ScrambleAudioProcess
     size.setUp (*this, proc.apvts, "size", "Size");
     reach.setUp (*this, proc.apvts, "reach", "Reach");
     keepLow.setUp (*this, proc.apvts, "keeplow", "Keep Low");
+    spray.setUp (*this, proc.apvts, "spray", "Spray");
     sens.setUp (*this, proc.apvts, "sens", "Sensitivity");
     hold.setUp (*this, proc.apvts, "hold", "Stay");
+    mix.setUp (*this, proc.apvts, "mix", "Dry/Wet");
     output.setUp (*this, proc.apvts, "out", "Output", true);
     transOn.setUp (*this, proc.apvts, "trans", "On");
     midiOn.setUp (*this, proc.apvts, "midion", "On");
     seqOn.setUp (*this, proc.apvts, "seqon", "On");
     bypass.setUp (*this, proc.apvts, "bypass", "Bypass");
     midiMode.setUp (*this, proc.apvts, "midimode", { { "Hold", 0 }, { "Latch", 1 } });
-    mode.setUp (*this, proc.apvts, "mode", { { "Random", 0 }, { "Octave", 1 } });
+    mode.setUp (*this, proc.apvts, "mode", { { "Random", 0 }, { "Octave", 1 }, { "Mirror", 2 }, { "Rotate", 3 }, { "Swap", 4 } });
     setUpMomentary (shuffleBtn, "shuffle");
     setUpMomentary (resetBtn, "reset");
     addAndMakeVisible (lane);
@@ -269,8 +271,10 @@ void ScrambleAudioProcessorEditor::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
     g.setColour (shuffled ? lab::col::accent : lab::col::dim);
     // Octave で並べ替え中は、実際に使っている塊の幅 (1/N oct) も出す
+    const char* modeNames[] = { "RANDOM", "OCTAVE", "MIRROR", "ROTATE", "SWAP" };
     const juce::String status = ! shuffled ? "ORIGINAL"
-                              : statusMode == scr::modeOctave ? "SHUFFLED  (OCTAVE, 1/" + juce::String (statusDiv) + " oct)" : "SHUFFLED  (RANDOM)";
+                              : statusMode == scr::modeOctave ? "SHUFFLED  (OCTAVE, 1/" + juce::String (statusDiv) + " oct)"
+                              : "SHUFFLED  (" + juce::String (modeNames[juce::jlimit (0, 4, statusMode)]) + ")";
     g.drawText (status, scramblePanel.getX() + 12, shuffleBtn.getY() - 26, scramblePanel.getWidth() - 24, 18,
                 juce::Justification::centred);
 
@@ -321,20 +325,23 @@ void ScrambleAudioProcessorEditor::resized()
     top.removeFromLeft (gap);
     displayPanel = top;
 
-    // SCRAMBLE: つまみ 2 つ、その下に状態とボタン
+    // SCRAMBLE: つまみ 4 つ (Size・Reach・Keep Low・Spray)、その下に Mode、状態とボタン
     auto s = scramblePanel.reduced (6, 6).withTrimmedTop (24);
     auto knobs = s.removeFromTop (100);
-    const int kw = knobs.getWidth() / 3;
+    const int kw = knobs.getWidth() / 4;
     size.setBounds (knobs.removeFromLeft (kw));
     reach.setBounds (knobs.removeFromLeft (kw));
-    keepLow.setBounds (knobs);
+    keepLow.setBounds (knobs.removeFromLeft (kw));
+    spray.setBounds (knobs);
+    // Mode は 5 つになったのでパネルの見出しの横に収まらない。つまみの下に 1 行で
+    s.removeFromTop (10);
+    mode.setBounds (s.removeFromTop (22).reduced (8, 0));
     s.removeFromTop (34);
     shuffleBtn.setBounds (s.removeFromTop (30).reduced (8, 0));
     s.removeFromTop (8);
     resetBtn.setBounds (s.removeFromTop (30).reduced (8, 0));
 
     view.setBounds (displayPanel.reduced (10, 8).withTrimmedTop (22));
-    mode.setBounds ({ scramblePanel.getRight() - 150, scramblePanel.getY() + 4, 142, 20 });
 
     // TRIGGER: TRANSIENT | MIDI NOTE | STEP SEQ
     auto t = triggerPanel.reduced (6, 6).withTrimmedTop (22);
@@ -364,6 +371,8 @@ void ScrambleAudioProcessorEditor::resized()
     auto mr = masterPanel.reduced (4, 6).withTrimmedTop (22);
     bypass.button.setBounds (masterPanel.getX() + 10, masterPanel.getY() + 30, masterW - 20, 20);
     mr.removeFromTop (34);
+    mix.setBounds (mr.removeFromTop (92));
+    mr.removeFromTop (12);
     output.setBounds (mr.removeFromTop (92));
     meterArea = mr.reduced (8, 6);
 }

@@ -55,7 +55,7 @@ private:
     ScrambleAudioProcessor& proc;
     lab::Look look;
 
-    lab::Knob size, reach, keepLow, sens, hold, output;
+    lab::Knob size, reach, keepLow, spray, sens, hold, mix, output;
     lab::Toggle transOn, midiOn, seqOn, bypass;
     lab::Switch midiMode, mode;
     juce::TextButton shuffleBtn { "Shuffle" }, resetBtn { "Reset" };

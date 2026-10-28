@@ -31,7 +31,9 @@ namespace scr
     constexpr int maxBins = (1 << 14) / 2 + 1;
     enum StepAction { stepNone = 0, stepShuffle = 1, stepReset = 2 };
     enum Source { srcButton = 0, srcTransient = 1, srcSeq = 2, srcMidi = 3, srcMode = 4 };
-    enum Mode { modeRandom = 0, modeOctave = 1 };
+    // Random / Octave は乱数の種で並びが決まる。Mirror / Rotate / Swap は規則で並べる (種を使わない。Size・Reach・Keep Low だけで決まる)
+    enum Mode { modeRandom = 0, modeOctave = 1, modeMirror = 2, modeRotate = 3, modeSwap = 4 };
+    inline bool isRuleMode (int m) { return m >= modeMirror; }
     constexpr int maxCuts = 512;
 
     struct Pattern
@@ -49,6 +51,7 @@ namespace scr
     struct Settings
     {
         float reach = 3.0f, keepLow = 200.0f, size = 0.25f;
+        float spray = 0.0f;   // 0〜1。塊ごとに左右へ振り分ける量
         int mode = modeRandom;
         bool transOn = true, seqOn = true, midiOn = true, midiLatch = false;
         float sensitivity = 50.0f, holdMs = 100.0f;
@@ -76,7 +79,10 @@ namespace scr
         bool shuffled = false;
         uint32_t seed = 1;
         int mode = modeRandom;   // 並べ替え中のモード (元の音のときは意味を持たない)
-        bool operator== (const State& o) const { return shuffled == o.shuffled && (! shuffled || (seed == o.seed && mode == o.mode)); }
+        bool operator== (const State& o) const
+        {
+            return shuffled == o.shuffled && (! shuffled || (mode == o.mode && (isRuleMode (mode) || seed == o.seed)));
+        }
     };
 
     inline uint32_t mix32 (uint32_t x)
@@ -125,6 +131,7 @@ namespace scr
                 s.shift.assign ((size_t) bins, 0);
                 s.keys.reserve ((size_t) bins);
                 s.ratio.assign ((size_t) bins, 1.0f);
+                s.side.assign ((size_t) bins, 0);
                 s.prev.assign ((size_t) channels, Track {});
                 s.cur.assign ((size_t) channels, Track {});
                 for (auto* tv : { &s.prev, &s.cur })
@@ -139,6 +146,7 @@ namespace scr
             havePrev.assign ((size_t) channels, false);
             peaks.reserve ((size_t) bins); bounds.reserve ((size_t) bins + 1); omega.reserve ((size_t) bins);
             colIdx.reserve ((size_t) bins);
+            chunkOf.assign ((size_t) bins, -1);
             kMax = std::min (bins - 1, (int) std::floor (20000.0 * n / sr));
             lastMode = -1;
             scheduledSlot = 0;
@@ -351,6 +359,7 @@ namespace scr
             std::vector<int> srcBin, shift;   // Random: 出力のビン k に来る入力のビンと、そのずれ (ビン数)
             std::vector<float> ratio;         // Octave: 入力のビンごとの比 (1, 2, 1/2 ...)
             std::vector<float> keys;
+            std::vector<signed char> side;    // Spray: 出力のビン k の振り先 (+1 = 左、−1 = 右、0 = 振らない)。元いた塊の番号の偶奇で決まる
             std::vector<Track> prev, cur;
             int64_t builtFor = -1;   // 作ったときの (状態, reach, keepLow, size, モード) の指紋
             int64_t trackFor = -2;   // 追跡がどの指紋のものか (作り直したら追跡をやり直す)
@@ -461,7 +470,7 @@ namespace scr
 
         int64_t fingerprint (const Slot& s) const
         {
-            const int64_t a = s.state.shuffled ? ((int64_t) s.state.seed + 1) * 2 + s.state.mode : 0;
+            const int64_t a = s.state.shuffled ? ((isRuleMode (s.state.mode) ? 0 : (int64_t) s.state.seed) + 1) * 8 + s.state.mode : 0;
             return a ^ ((int64_t) std::lround (cfg.reach * 100.0f) << 34) ^ ((int64_t) std::lround (cfg.keepLow) << 46)
                      ^ ((int64_t) std::lround (cfg.size * 1000.0f) << 56);
         }
@@ -501,16 +510,40 @@ namespace scr
             else
             {
                 if (s.state.shuffled)
-                    buildRandom (s, sz, reachQ, nIn, nOut);
+                    buildTape (s, sz, reachQ, nIn, nOut);
                 for (int k = 0; k < bins; ++k) d[(size_t) k].store (s.srcBin[(size_t) k], std::memory_order_relaxed);
             }
+            buildSide (s, sz);
             display.numCutIn[(size_t) slotIndex] = nIn;
             display.numCutOut[(size_t) slotIndex] = nOut;
             display.keepLow = cfg.keepLow;
             display.reach = cfg.reach;
         }
 
-        void buildRandom (Slot& s, double sz, double reachQ, int& nIn, int& nOut)
+        // Spray の振り先: Keep Low から Size オクターブずつ切った塊 (Random と同じ格子) の番号の偶奇で、左右交互に振る。
+        // 振り先は塊について回る (並べ替えで動いた塊も、元の塊の側に鳴る)。Octave は塊がピッチシフトで動くので出力のビンの塊で決める。
+        // 並べ替えていない状態でも同じ格子で振る (Spray は並べ替えとは別に効く)
+        void buildSide (Slot& s, double sz)
+        {
+            const int k0 = std::max (1, (int) std::ceil (cfg.keepLow * n / sr));
+            std::fill (chunkOf.begin(), chunkOf.end(), -1);
+            int lo = k0;
+            for (int i = 1, c = 0; lo <= kMax; ++i, ++c)
+            {
+                const int hi = juce::jlimit (lo + 1, kMax + 1, (int) std::round (k0 * std::pow (2.0, i * sz)));
+                for (int k = lo; k < hi; ++k) chunkOf[(size_t) k] = c;
+                lo = hi;
+            }
+            const bool octave = s.state.shuffled && s.state.mode == modeOctave;
+            for (int k = 0; k < bins; ++k)
+            {
+                const int c = chunkOf[(size_t) (octave ? k : s.srcBin[(size_t) k])];
+                s.side[(size_t) k] = (signed char) (c < 0 ? 0 : (c % 2 == 0 ? 1 : -1));
+            }
+        }
+
+        // Random / Mirror / Rotate / Swap: 塊をそれぞれの幅のまま並べ直す (テープの切り貼り)。違うのは並べる順番だけ
+        void buildTape (Slot& s, double sz, double reachQ, int& nIn, int& nOut)
         {
             const int k0 = std::max (1, (int) std::ceil (cfg.keepLow * n / sr));
             const int kTop = kMax;
@@ -524,18 +557,44 @@ namespace scr
                 edges.push_back (e);
             }
             const int chunks = (int) edges.size() - 1;
-            juce::Random r ((juce::int64) s.state.seed);
-            s.keys.resize ((size_t) chunks);
-            for (auto& k : s.keys) k = r.nextFloat();
-            sortKey.resize ((size_t) chunks);
             order.resize ((size_t) chunks);
-            for (int c = 0; c < chunks; ++c)
+            for (int c = 0; c < chunks; ++c) order[(size_t) c] = c;
+            // 規則のモードでの Reach は、塊の数に直した「最大の移動距離」 m (Size 1/4・Reach 3 なら 12 塊)
+            const int m = std::max (0, (int) std::lround (reachQ / sz));
+            if (s.state.mode == modeMirror && m > 0)
             {
-                const double centre = 0.5 * (edges[(size_t) c] + edges[(size_t) c + 1]);
-                sortKey[(size_t) c] = (float) (std::log2 (centre) + reachQ * s.keys[(size_t) c]);
-                order[(size_t) c] = c;
+                // m + 1 塊ずつの組の中で順番を逆さに (端どうしがちょうど m 塊 = Reach 動く)
+                for (int a = 0; a < chunks; a += m + 1)
+                    std::reverse (order.begin() + a, order.begin() + std::min (chunks, a + m + 1));
             }
-            std::sort (order.begin(), order.end(), [this] (int a, int b) { return sortKey[(size_t) a] < sortKey[(size_t) b]; });
+            else if (s.state.mode == modeRotate && m > 0)
+            {
+                // 下から m 塊を上端へ回し、残りは全部そのぶん下へずれる (ずれ = 回した塊の幅の合計 = Keep Low × (2^Reach − 1) Hz)。
+                // 逆向き (上の m 塊を下へ回す) だと、高域の塊は幅が広いので m = 1 でもいきなり数 kHz ずれ、Reach で少しずつ変わらない
+                std::rotate (order.begin(), order.begin() + m % chunks, order.end());
+            }
+            else if (s.state.mode == modeSwap && m > 0)
+            {
+                // 2m 塊ずつの組の前半と後半を入れ替える (m = 1 なら隣どうし)。最後の半端な組も前後を入れ替える
+                for (int a = 0; a < chunks; a += 2 * m)
+                {
+                    const int e = std::min (chunks, a + 2 * m), mid = std::min (e, a + m);
+                    std::rotate (order.begin() + a, order.begin() + mid, order.begin() + e);
+                }
+            }
+            else if (s.state.mode == modeRandom)
+            {
+                juce::Random r ((juce::int64) s.state.seed);
+                s.keys.resize ((size_t) chunks);
+                for (auto& k : s.keys) k = r.nextFloat();
+                sortKey.resize ((size_t) chunks);
+                for (int c = 0; c < chunks; ++c)
+                {
+                    const double centre = 0.5 * (edges[(size_t) c] + edges[(size_t) c + 1]);
+                    sortKey[(size_t) c] = (float) (std::log2 (centre) + reachQ * s.keys[(size_t) c]);
+                }
+                std::sort (order.begin(), order.end(), [this] (int a, int b) { return sortKey[(size_t) a] < sortKey[(size_t) b]; });
+            }
             auto& cIn = display.cutIn[(size_t) (&s - slots.data())];
             auto& cOut = display.cutOut[(size_t) (&s - slots.data())];
             for (int e : edges) if (nIn < maxCuts) cIn[(size_t) nIn++].store (e);
@@ -632,6 +691,16 @@ namespace scr
             havePrev[(size_t) ch] = true;
         }
 
+        // Spray: 左は 1 + w·side、右は 1 − w·side 倍。足すと元に戻るので、モノラルにまとめても (中央の音なら) 音量も音色も変わらない。
+        // w = 1 で塊は片側だけ (反対側は無音、鳴る側は +6 dB)
+        void applySpray (const Slot& s, int ch, std::complex<float>* y, int nb) const
+        {
+            if (cfg.spray <= 0.0f || nch < 2 || ch > 1) return;
+            const float w = ch == 0 ? cfg.spray : -cfg.spray;
+            for (int k = 0; k < nb; ++k)
+                if (const int sd = s.side[(size_t) k]) y[k] *= 1.0f + w * (float) sd;
+        }
+
         void synthOctave (Slot& s, int ch, int64_t F, const std::complex<float>* in, std::complex<float>* y)
         {
             const double pi = juce::MathConstants<double>::pi, tp = 2.0 * pi;
@@ -697,6 +766,7 @@ namespace scr
                     if (sl.state.shuffled && sl.state.mode == modeOctave)
                     {
                         synthOctave (sl, ch, F, in, y);
+                        applySpray (sl, ch, y, nb);
                         continue;
                     }
                     const auto& src = slots[(size_t) s].srcBin;
@@ -711,6 +781,7 @@ namespace scr
                         const int64_t rIdx = (((int64_t) d % n + n) % n * Fm) % n;
                         y[k] = in[src[(size_t) k]] * cis[(size_t) rIdx];
                     }
+                    applySpray (sl, ch, y, nb);
                 }
 
             for (int k = 0; k < nb; ++k) power[(size_t) k] += std::norm (in[k]);
@@ -761,7 +832,7 @@ namespace scr
         std::vector<float> mag, phase;
         std::vector<std::vector<float>> prevPhase;
         std::vector<bool> havePrev;
-        std::vector<int> peaks, bounds, colIdx;
+        std::vector<int> peaks, bounds, colIdx, chunkOf;
         std::vector<double> omega;
         int kMax = 853, lastMode = -1;
     };

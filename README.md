@@ -33,14 +33,20 @@ Made with Claude Code. Provided as-is. Bug reports via Issues are welcome, but r
 パラメータ
 - SCRAMBLE
   - Mode: Random (塊を周波数シフトで並べ直す) / Octave (音名を保ったまま、帯域ごとにオクターブだけ入れ替える)
+    / Mirror・Rotate・Swap (乱数を使わず規則で並べる。つまみが同じなら毎回同じ並び)
+    - Mirror: Reach の幅ごとに、塊の順番を逆さにする
+    - Rotate: 下の塊を上端へ回し、残りはそのぶん下へずらす
+    - Swap: 塊の組の前半と後半を入れ替える (Reach が小さいと隣どうし)
+    - 既定の Reach 3 では Rotate と Swap がほぼ同じ並びになる。違いが聞こえやすいのは Reach 1〜2 あたり
   - Size: 塊の幅 (オクターブ)
   - Reach: 塊が動く最大の距離 (オクターブ)。0 で元のまま
   - Keep Low: これより下は動かさない
+  - Spray: 塊ごとに左右交互へ振ってステレオを広げる。左右を足すと元に戻る (モノラルにしても変わらない)。並べ替えていないときも効く
   - Shuffle / Reset: 押した瞬間に新しい並べ替え / 元に戻す
 - TRIGGER
   - Transient: アタックで切り替え。Sensitivity、Stay (切り替えた後、次のアタックを受け付けるまでの時間)
   - MIDI: ノートごとに決まった並べ替えになる。Hold (離すと戻る) / Latch (離しても保持)。
     別の MIDI トラックの MIDI To を「このトラック → Scramble」にする
   - Seq: 16 ステップ。クリックで 空 → S (Shuffle) → R (Reset)、右クリックで空
-- MASTER: Output / Bypass
+- MASTER: Bypass / Dry/Wet (原音と処理後を混ぜる) / Output (混ぜたあとの全体)
 - 画面: 上が入力、下が出力のスペクトル。色はその音が元いた周波数 (低 = 赤 → 高 = 紫)

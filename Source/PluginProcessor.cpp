@@ -27,6 +27,7 @@ ScrambleAudioProcessor::ScrambleAudioProcessor()
     pSize     = apvts.getRawParameterValue ("size");
     pMode     = apvts.getRawParameterValue ("mode");
     pKeepLow  = apvts.getRawParameterValue ("keeplow");
+    pSpray    = apvts.getRawParameterValue ("spray");
     pShuffle  = apvts.getRawParameterValue ("shuffle");
     pReset    = apvts.getRawParameterValue ("reset");
     pTrans    = apvts.getRawParameterValue ("trans");
@@ -35,6 +36,7 @@ ScrambleAudioProcessor::ScrambleAudioProcessor()
     pSeqOn    = apvts.getRawParameterValue ("seqon");
     pMidiOn   = apvts.getRawParameterValue ("midion");
     pMidiMode = apvts.getRawParameterValue ("midimode");
+    pMix      = apvts.getRawParameterValue ("mix");
     pOut      = apvts.getRawParameterValue ("out");
     pBypass   = apvts.getRawParameterValue ("bypass");
     lastSteps = stepsString();
@@ -69,7 +71,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ScrambleAudioProcessor::crea
     using namespace juce;
     AudioProcessorValueTreeState::ParameterLayout layout;
     // Mode: Random = 塊を周波数シフトで並べ直す / Octave = 塊を 2^k 倍して、音名を保ったままオクターブだけ入れ替える
-    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "mode", 1 }, "Mode", StringArray { "Random", "Octave" }, 0));
+    //       Mirror / Rotate / Swap = 乱数を使わず規則で並べる (同じつまみなら毎回同じ並び)。選択肢は後ろに足すだけにする (保存済みのセットの Octave を 1 のまま保つ)
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "mode", 1 }, "Mode", StringArray { "Random", "Octave", "Mirror", "Rotate", "Swap" }, 0));
     // Size: 塊の幅 (オクターブ)。Octave モードでは 1/N (N = 1/Size を丸めた整数) として使う。Reach: 塊が動く最大の距離 (オクターブ)。0 で元のまま
     NormalisableRange<float> sizeRange (0.04f, 1.0f, 0.001f);
     sizeRange.setSkewForCentre (0.2f);
@@ -83,6 +86,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout ScrambleAudioProcessor::crea
     lowRange.setSkewForCentre (200.0f);
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "keeplow", 1 }, "Keep Low", lowRange, 200.0f,
                                                        AudioParameterFloatAttributes().withStringFromValueFunction (hzText)));
+    // Spray: 塊ごとに左右交互へ振ってステレオを広げる量 (0 % で今までどおり)。並べ替えていないときも効く
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "spray", 1 }, "Spray",
+                                                       NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f,
+                                                       AudioParameterFloatAttributes().withStringFromValueFunction (pctText)));
     // Shuffle / Reset はボタン (押した瞬間に効く)。パラメータなので MIDI マップや Push にも割り当てられる
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "shuffle", 1 }, "Shuffle", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "reset", 1 }, "Reset", false));
@@ -100,6 +107,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout ScrambleAudioProcessor::crea
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "midion", 1 }, "MIDI Trig", true));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "midimode", 1 }, "MIDI Mode",
                                                         StringArray { "Hold", "Latch" }, 0));
+    // Dry/Wet: 遅らせた原音と処理後を混ぜる (100 % = 今までどおり処理後だけ)。Output は混ぜたあとの全体に掛かる
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "mix", 1 }, "Dry/Wet",
+                                                       NormalisableRange<float> (0.0f, 100.0f, 1.0f), 100.0f,
+                                                       AudioParameterFloatAttributes().withStringFromValueFunction (pctText)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "out", 1 }, "Output",
                                                        NormalisableRange<float> (-24.0f, 12.0f, 0.1f), 0.0f,
                                                        AudioParameterFloatAttributes().withStringFromValueFunction (dbText)));
@@ -119,7 +130,7 @@ void ScrambleAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
 {
     const int nch = std::max (1, getTotalNumInputChannels());
     engine.prepare (sampleRate, nch);
-    engine.restore ({ savedShuffled.load(), savedSeed.load(), pMode->load() > 0.5f ? scr::modeOctave : scr::modeRandom });
+    engine.restore ({ savedShuffled.load(), savedSeed.load(), (int) std::lround (pMode->load()) });
     restorePending = false;
     setLatencySamples (engine.latency());
 
@@ -129,6 +140,8 @@ void ScrambleAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     dryDelay.reset();
     dry.setSize (nch, std::max (1, samplesPerBlock));
     bypassMix.reset (sampleRate, 0.01);
+    wetMix.reset (sampleRate, 0.02);
+    wetMix.setCurrentAndTargetValue (pMix->load() * 0.01f);
     bypassMix.setCurrentAndTargetValue (pBypass->load() > 0.5f ? 1.0f : 0.0f);
     outGain.reset (sampleRate, 0.02);
     outGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (pOut->load()));
@@ -148,13 +161,14 @@ void ScrambleAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         return;
 
     if (restorePending.exchange (false))
-        engine.restore ({ savedShuffled.load(), savedSeed.load(), pMode->load() > 0.5f ? scr::modeOctave : scr::modeRandom });
+        engine.restore ({ savedShuffled.load(), savedSeed.load(), (int) std::lround (pMode->load()) });
 
     scr::Settings st;
     st.reach = pReach->load();
     st.size = pSize->load();
-    st.mode = pMode->load() > 0.5f ? scr::modeOctave : scr::modeRandom;
+    st.mode = (int) std::lround (pMode->load());
     st.keepLow = pKeepLow->load();
+    st.spray = pSpray->load() * 0.01f;
     st.transOn = pTrans->load() > 0.5f;
     st.sensitivity = pSens->load();
     st.holdMs = pHold->load();
@@ -180,7 +194,7 @@ void ScrambleAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
             else tp.playing = false;
         }
 
-    // バイパス用に、入力をレイテンシぶん遅らせて控える
+    // バイパスと Dry/Wet 用に、入力をレイテンシぶん遅らせて控える
     dry.setSize (nch, n, false, false, true);
     float inPk = 0.0f;
     for (int ch = 0; ch < nch; ++ch)
@@ -199,16 +213,18 @@ void ScrambleAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     midi.clear();
 
     bypassMix.setTargetValue (pBypass->load() > 0.5f ? 1.0f : 0.0f);
+    wetMix.setTargetValue (pMix->load() * 0.01f);
     outGain.setTargetValue (juce::Decibels::decibelsToGain (pOut->load()));
     float outPk = 0.0f;
     for (int i = 0; i < n; ++i)
     {
-        const float b = bypassMix.getNextValue(), g = outGain.getNextValue();
+        const float b = bypassMix.getNextValue(), g = outGain.getNextValue(), m = wetMix.getNextValue();
         for (int ch = 0; ch < nch; ++ch)
         {
             auto* p = buffer.getWritePointer (ch);
-            const float wet = p[i] * g;
-            p[i] = wet + (dry.getSample (ch, i) - wet) * b;
+            const float d = dry.getSample (ch, i);
+            const float wet = (d + (p[i] - d) * m) * g;
+            p[i] = wet + (d - wet) * b;
             outPk = std::max (outPk, std::abs (p[i]));
         }
     }

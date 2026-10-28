@@ -18,10 +18,11 @@ SpecGlitch (別プラグイン、中止済み) の scramble 機能を単体に�
 
 | ID | 表示名 | 範囲 | 既定 | 中身 |
 |---|---|---|---|---|
-| mode | Mode | 0 Random / 1 Octave | Random | 下の「並べ替え」参照 |
+| mode | Mode | 0 Random / 1 Octave / 2 Mirror / 3 Rotate / 4 Swap | Random | 下の「並べ替え」参照。選択肢は後ろに足すだけ (並びを変えると保存済みのセットの Mode がずれる) |
 | size | Size | 0.04〜1 オクターブ | 0.25 | 塊の幅。Octave では 1/N (N = 1/Size を丸めた整数) |
 | reach | Reach | 0〜8 オクターブ | 3 | 塊が動く最大の距離。0 で元のまま。単調 (上げるほど遠くへ) |
 | keeplow | Keep Low | 0〜1000 Hz | 200 Hz | これより下は動かさない (つまみの値どおり) |
+| spray | Spray | 0〜100 % | 0 % | ステレオを広げる量。塊ごとに左右交互へ振る (下の「Spray」参照)。並べ替えていないときも効く |
 | shuffle | Shuffle | ボタン | | 押した瞬間に新しい並べ替えへ |
 | reset | Reset | ボタン | | 押した瞬間に元の並びへ |
 | trans | Transient Trig | on/off | on | アタックで切り替え |
@@ -30,7 +31,8 @@ SpecGlitch (別プラグイン、中止済み) の scramble 機能を単体に�
 | seqon | Seq Trig | on/off | on | 16 ステップのシーケンサー |
 | midion | MIDI Trig | on/off | on | MIDI ノートで切り替え |
 | midimode | MIDI Mode | 0 Hold / 1 Latch | Hold | Hold: 離したら戻る (他に押さえているノートがあればそのノートの並べ替えへ)。Latch: 離しても保持 |
-| out | Output | -24〜12 dB | 0 | |
+| mix | Dry/Wet | 0〜100 % | 100 % | レイテンシぶん遅らせた原音と処理後を混ぜる (2026-10-28 追加)。100 % で今までどおり |
+| out | Output | -24〜12 dB | 0 | Dry/Wet で混ぜたあとの全体に掛かる |
 | bypass | Bypass | on/off | off | |
 
 - Shuffle / Reset はパラメータなので MIDI マップや Push に割り当てられる
@@ -50,6 +52,19 @@ SpecGlitch (別プラグイン、中止済み) の scramble 機能を単体に�
   塊ごとに乱数 u ∈ [0,1) を持ち、「塊の位置 (オクターブ) + Reach × u」の順に、塊をそれぞれの幅のまま並べ直す (テープを切って並べ替えるのと同じ)。
   塊は整数ビンずれる = 周波数シフト。フレームごとに位相を回して、どんなずれ幅でも濁らないようにする
   (Δk が 4 の倍数でないとフレームごとに位相が食い違って濁る)
+- 規則のモード Mirror / Rotate / Swap (2026-10-28、ユーザー「完全にランダムでなく、パラメーターから機械的に決まるものが欲しい」):
+  乱数を使わず、Size・Reach・Keep Low だけで並びが決まる (種によらない。State の比較と指紋でも種を見ない)。塊の切り方とテープの切り貼りは Random と同じで、並べる順番だけが違う。
+  m = round(Reach / Size) 塊 (Size 1/4・Reach 1 なら 4 塊) として
+  - Mirror: m + 1 塊ずつの組の中で順番を逆さに
+  - Rotate: 下から m 塊を上端へ回し、残りは全部そのぶん下へ (ずれ = Keep Low × (2^Reach − 1) Hz)。上の m 塊を下へ回す向きだと、高域の塊は幅が広いので m = 1 でも数 kHz ずれるため、この向きにした
+  - Swap: 2m 塊ずつの組の前半と後半を入れ替え (m = 1 なら隣どうし)。最後の半端な組も前後を入れ替える
+  トリガー (Shuffle・トランジェント・S ステップ・MIDI) は「規則どおりの並びへ」、Reset は元へ。すでに規則の並びなら何も起きない (切り替えも数えない)
+  テープの切り貼りなので、上へ行く塊は幅の狭い低域のぶんだけ大きく飛ぶ: Swap は上がる側が Reach のおよそ 2 倍、Rotate は回り込む塊が最上部 (20 kHz 近く) に細い帯で集まる。
+  既定の Reach 3 では Rotate と Swap がほぼ同じ並びになる (どちらも 200〜1600 Hz を上へ、残りを 1.4 kHz 下へ)。違いが聞き取れるのは Reach 1〜2 あたり
+- Spray (2026-10-28、ユーザー「ステレオイメージを広げる機能」): Keep Low から Size オクターブずつ切った塊 (Random と同じ格子) の番号の偶奇で、左右交互に振る。
+  左 = 1 + w·side、右 = 1 − w·side 倍 (w = Spray、side = ±1)。足すと元に戻るので、中央の音ならモノラルにまとめても変わらない (測定 −140 dB)。
+  振り先は塊について回る (動いた塊も元の塊の側で鳴る)。Octave は出力のビンの塊で決める。Keep Low より下と 20 kHz より上は振らない。モノラルのトラックでは効かない。
+  測定 (左右同じノイズ): 左右の相関 Spray 50 % → 0.67、100 % → 0.12。左右それぞれの音量は 100 % で約 +2.5 dB (モノラル互換を優先して、音量の補正はしていない)
 - Octave モード (ユーザーの発想「入れ替え先との周波数比を 1:2 に固定」): 1/N オクターブの塊を Keep Low (最低 20 Hz) から切り、
   音名の帯 (列) ごとに、段 (オクターブ) を「段 + Reach × u」の順に並べ替える。塊は 2^k 倍にピッチシフトして移す → 音名は保たれ、帯域ごとのオクターブだけ変わる。
   ピッチシフトはピーク単位 (Laroche & Dolson): 谷で区切った領域を丸ごと整数ビン d 移し、θ を積み上げて位相をそろえる
@@ -65,14 +80,14 @@ SpecGlitch (別プラグイン、中止済み) の scramble 機能を単体に�
 ## UI (Source/PluginEditor.cpp、共通の見た目は lab/LabLook.h)
 
 - ChordRes と同じ Ableton 純正寄りの見た目
-- パネル: SCRAMBLE (Mode・Size・Reach・Keep Low・Shuffle/Reset) / SPECTRUM / TRIGGER (Transient・MIDI・Seq の各ブロック、ステップ列) / MASTER (Output・Bypass・メーター)
+- パネル: SCRAMBLE (Size・Reach・Keep Low・Spray のつまみ、その下に Mode の 5 択、状態、Shuffle/Reset) / SPECTRUM / TRIGGER (Transient・MIDI・Seq の各ブロック、ステップ列) / MASTER (Bypass・Dry/Wet・Output・メーター)
 - 色分けスペクトル (ユーザーが選んだ表示): 上が入力、下が出力。色 = その音が元いた周波数 (低 = 赤 → 高 = 紫)。
   出力側で色が入れ替わって並ぶ = そこへ飛んできた音。Keep Low より下は色を落とす。下端の目盛は塊の切れ目
 - ステップ列: クリックで 空 → S → R → 空、右クリックで空
 
 ## 状態と経緯
 
-- 耐久テスト (robust) FAIL 0 (既定と Octave の両方)
+- 耐久テスト (robust) FAIL 0 (5 つのモードすべて。`SCR_ROBUST_MODE=0〜4` でモードを選ぶ。`SCR_ROBUST_OCTAVE=1` も残してある)
 - Windows (GitHub Actions、MSVC) でも robust は 0 FAIL / 0 WARN (2026-10-01)
 - Reach は当初「20 Hz 起点の区画」方式で、Reach を上げると低域の飛ぶ範囲が逆に狭まる所があった → ユーザー指摘で「最大でどこまで飛ぶか」(単調) に作り直し、塊の幅は Size で別に指定
 - SpecGlitch は中止・削除済み。同種の可視化ツールや SpecGlitch の再提案はしない
